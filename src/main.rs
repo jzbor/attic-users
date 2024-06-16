@@ -1,4 +1,4 @@
-use std::{error::Error, fs, path::PathBuf, process::{self, Command}};
+use std::{fs, path::PathBuf, process::{self, Command}};
 
 use clap::Parser;
 use serde::*;
@@ -40,6 +40,9 @@ pub struct Args {
 
     #[clap(short, long, default_value = "atticadm")]
     program: String,
+
+    #[clap(short, long, default_value = "3 years")]
+    validity: String,
 
     #[clap(flatten)]
     mode: ModeGroup,
@@ -85,17 +88,17 @@ impl CachePermissions {
     }
 }
 
-fn generate_commands(config: &Vec<UserConfig>) -> Vec<Command> {
-    let mut commands: Vec<Command> = vec![];
+fn generate_commands(config: &Vec<UserConfig>, args: &Args) -> Vec<(String, Command)> {
+    let mut commands = vec![];
     for user in config {
-        let mut cmd = Command::new("atticadm");
-        cmd.args(["make-token", "--sub", &user.name]);
+        let mut cmd = Command::new(&args.program);
+        cmd.args(["make-token", "--sub", &user.name, "--validity", &args.validity]);
         for rule in &user.rules {
             for perm in &rule.permissions {
                 cmd.args([perm.to_atticadm_flag(), &rule.pattern]);
             }
         }
-        commands.push(cmd);
+        commands.push((user.name.clone(), cmd));
     }
     commands
 }
@@ -110,7 +113,7 @@ fn main() {
 
     if args.mode.example {
         println!("{}", serde_yaml::to_string(&UserConfig::example()).unwrap());
-    } else if let Some(file) = args.mode.file {
+    } else if let Some(file) = &args.mode.file {
         let contents = match fs::read_to_string(file) {
             Ok(contents) => contents,
             Err(e) => die("Unable to read file", &e.to_string()),
@@ -119,14 +122,13 @@ fn main() {
             Ok(config) => config,
             Err(e) => die("Unable to parse config", &e.to_string()),
         };
-        let mut commands = generate_commands(&config);
+        let mut commands = generate_commands(&config, &args);
 
-        if args.dry_run {
-            for cmd in commands {
+        for (user, cmd) in &mut commands {
+            println!("\n=> Registering '{}'", user);
+            if args.dry_run {
                 println!("{:?}", cmd);
-            }
-        } else {
-            for cmd in &mut commands {
+            } else {
                 match cmd.status() {
                     Ok(_) => (),
                     Err(e) => die("Unable execute command", &e.to_string()),
