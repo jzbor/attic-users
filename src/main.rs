@@ -4,9 +4,9 @@ use clap::Parser;
 use serde::*;
 
 #[derive(Serialize,Deserialize,PartialEq,Debug,Clone)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 enum CachePermissions {
-    Push, Pull, Delete, Create, Configure
+    Push, Pull, Delete, Create, Configure, ConfigureCacheRetention, DestroyCache
 }
 
 #[derive(Serialize,Deserialize,PartialEq,Debug,Clone)]
@@ -58,7 +58,7 @@ impl UserConfig {
                 rules: vec![
                     CacheRule {
                         pattern: String::from("alice-*"),
-                        permissions: vec![Push, Pull, Create, Delete],
+                        permissions: vec![Push, Pull, Delete, Create, Configure, ConfigureCacheRetention, DestroyCache],
                     },
                 ],
             },
@@ -67,7 +67,7 @@ impl UserConfig {
                 rules: vec![
                     CacheRule {
                         pattern: String::from("bob-*"),
-                        permissions: vec![Push, Pull, Create, Delete],
+                        permissions: vec![Push, Pull, Delete, Create, Configure, ConfigureCacheRetention, DestroyCache],
                     },
                 ],
             },
@@ -83,7 +83,9 @@ impl CachePermissions {
             Pull => "--pull",
             Delete => "--delete",
             Create => "--create-cache",
-            Configure => "--configure",
+            Configure => "--configure-cache",
+            ConfigureCacheRetention => "--configure-cache-retention",
+            DestroyCache => "--destroy-cache",
         }
     }
 }
