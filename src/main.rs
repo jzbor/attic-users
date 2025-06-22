@@ -37,7 +37,7 @@ pub struct Args {
     #[clap(short, long, default_value = "3 years")]
     validity: String,
 
-    file: PathBuf,
+    file: Option<PathBuf>,
 
     name: String,
 }
@@ -120,7 +120,12 @@ fn die(err: &str, reason: &str) -> !{
 fn main() {
     let args = Args::parse();
 
-    let contents = match fs::read_to_string(&args.file) {
+    let file = match &args.file {
+        Some(path) => path.clone(),
+        None => PathBuf::from("/etc/attic-users.toml"),
+    };
+
+    let contents = match fs::read_to_string(&file) {
         Ok(contents) => contents,
         Err(e) => die("Unable to read file", &e.to_string()),
     };
