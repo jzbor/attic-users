@@ -28,17 +28,24 @@ struct CacheRule {
 #[derive(clap::Parser)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
+    /// Show command but don't actually run it
     #[clap(short, long)]
     dry_run: bool,
 
+    /// Binary to call with the corresponding args
     #[clap(short, long, default_value = "atticadm")]
     program: String,
 
-    #[clap(short, long, default_value = "3 years")]
+    /// Duration of validity for the generated tokens
+    #[clap(short, long, default_value = "2 years")]
     validity: String,
 
-    file: Option<PathBuf>,
 
+    /// File with user configurations in it
+    #[clap(short, long, default_value = "/etc/attic-users.toml")]
+    file: PathBuf,
+
+    /// Item name
     name: String,
 }
 
@@ -120,14 +127,9 @@ fn die(err: &str, reason: &str) -> !{
 fn main() {
     let args = Args::parse();
 
-    let file = match &args.file {
-        Some(path) => path.clone(),
-        None => PathBuf::from("/etc/attic-users.toml"),
-    };
-
-    let contents = match fs::read_to_string(&file) {
+    let contents = match fs::read_to_string(&args.file) {
         Ok(contents) => contents,
-        Err(e) => die("Unable to read file", &e.to_string()),
+        Err(e) => die("Unable to read config file", &e.to_string()),
     };
     let config: HashMap<String, HashMap<String, Vec<CachePermissionsExtended>>> = match toml::from_str(&contents) {
         Ok(config) => config,
