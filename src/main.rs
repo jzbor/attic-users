@@ -1,7 +1,8 @@
-use std::{fs, path::PathBuf, process::{self, Command}};
+use std::{collections::HashMap, fs, path::PathBuf, process::{self, Command}};
 
 use clap::Parser;
 use serde::*;
+
 
 #[derive(Serialize,Deserialize,PartialEq,Debug,Clone)]
 #[serde(rename_all = "kebab-case")]
@@ -10,10 +11,12 @@ enum CachePermissions {
 }
 
 #[derive(Serialize,Deserialize,PartialEq,Debug,Clone)]
-struct UserConfig {
-    name: String,
-    rules: Vec<CacheRule>,
+#[serde(rename_all = "kebab-case")]
+enum CachePermissionsExtended {
+    Push, Pull, Delete, Create, Configure, ConfigureCacheRetention, DestroyCache,
+    All, Admin, Use
 }
+
 
 #[derive(Serialize,Deserialize,PartialEq,Debug,Clone)]
 struct CacheRule {
@@ -22,17 +25,7 @@ struct CacheRule {
 }
 
 
-#[derive(Debug, clap::Args)]
-#[group(required = true, multiple = false)]
-struct ModeGroup {
-    /// Print example to stdout
-    #[clap(short, long)]
-    example: bool,
-
-    file: Option<PathBuf>,
-}
-
-#[derive(Parser)]
+#[derive(clap::Parser)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
     #[clap(short, long)]
@@ -44,36 +37,11 @@ pub struct Args {
     #[clap(short, long, default_value = "3 years")]
     validity: String,
 
-    #[clap(flatten)]
-    mode: ModeGroup,
+    file: PathBuf,
+
+    name: String,
 }
 
-
-impl UserConfig {
-    fn example() -> Vec<Self> {
-        use CachePermissions::*;
-        vec![
-            UserConfig {
-                name: String::from("alice"),
-                rules: vec![
-                    CacheRule {
-                        pattern: String::from("alice-*"),
-                        permissions: vec![Push, Pull, Delete, Create, Configure, ConfigureCacheRetention, DestroyCache],
-                    },
-                ],
-            },
-            UserConfig {
-                name: String::from("bob"),
-                rules: vec![
-                    CacheRule {
-                        pattern: String::from("bob-*"),
-                        permissions: vec![Push, Pull, Delete, Create, Configure, ConfigureCacheRetention, DestroyCache],
-                    },
-                ],
-            },
-        ]
-    }
-}
 
 impl CachePermissions {
     fn to_atticadm_flag(&self) -> &str {
@@ -90,19 +58,58 @@ impl CachePermissions {
     }
 }
 
-fn generate_commands(config: &Vec<UserConfig>, args: &Args) -> Vec<(String, Command)> {
-    let mut commands = vec![];
-    for user in config {
-        let mut cmd = Command::new(&args.program);
-        cmd.args(["make-token", "--sub", &user.name, "--validity", &args.validity]);
-        for rule in &user.rules {
+
+impl From<CachePermissionsExtended>  for Vec<CachePermissions> {
+    fn from(value: CachePermissionsExtended) -> Self {
+        use CachePermissionsExtended::*;
+        let deconstructed = match value {
+            Push => vec![CachePermissions::Push],
+            Pull => vec![CachePermissions::Pull],
+            Delete => vec![CachePermissions::Delete],
+            Create => vec![CachePermissions::Create],
+            Configure => vec![CachePermissions::Configure],
+            ConfigureCacheRetention => vec![CachePermissions::ConfigureCacheRetention],
+            DestroyCache => vec![CachePermissions::DestroyCache],
+
+            All => vec![
+                CachePermissions::Push,
+                CachePermissions::Pull,
+                CachePermissions::Delete,
+                CachePermissions::Create,
+                CachePermissions::Configure,
+                CachePermissions::ConfigureCacheRetention,
+                CachePermissions::DestroyCache,
+            ],
+            Admin => vec![
+                CachePermissions::Create,
+                CachePermissions::Configure,
+                CachePermissions::ConfigureCacheRetention,
+                CachePermissions::DestroyCache,
+            ],
+            Use => vec![
+                CachePermissions::Push,
+                CachePermissions::Pull,
+            ],
+        };
+        Vec::from(deconstructed)
+    }
+}
+
+
+fn generate_command(config: &HashMap<String, Vec<CacheRule>>, args: &Args) -> (String, Command) {
+    let mut cmd = Command::new(&args.program);
+    let user = &args.name;
+    if let Some(rules) = config.get(user) {
+        cmd.args(["make-token", "--sub", &user, "--validity", &args.validity]);
+        for rule in rules {
             for perm in &rule.permissions {
                 cmd.args([perm.to_atticadm_flag(), &rule.pattern]);
             }
         }
-        commands.push((user.name.clone(), cmd));
+        (user.to_owned(), cmd)
+    } else {
+        die("Could not find rules", &format!("No such user '{}' in files", user));
     }
-    commands
 }
 
 fn die(err: &str, reason: &str) -> !{
@@ -113,29 +120,35 @@ fn die(err: &str, reason: &str) -> !{
 fn main() {
     let args = Args::parse();
 
-    if args.mode.example {
-        println!("{}", serde_yaml::to_string(&UserConfig::example()).unwrap());
-    } else if let Some(file) = &args.mode.file {
-        let contents = match fs::read_to_string(file) {
-            Ok(contents) => contents,
-            Err(e) => die("Unable to read file", &e.to_string()),
-        };
-        let config: Vec<UserConfig> = match serde_yaml::from_str(&contents) {
-            Ok(config) => config,
-            Err(e) => die("Unable to parse config", &e.to_string()),
-        };
-        let mut commands = generate_commands(&config, &args);
+    let contents = match fs::read_to_string(&args.file) {
+        Ok(contents) => contents,
+        Err(e) => die("Unable to read file", &e.to_string()),
+    };
+    let config: HashMap<String, HashMap<String, Vec<CachePermissionsExtended>>> = match toml::from_str(&contents) {
+        Ok(config) => config,
+        Err(e) => die("Unable to parse config", &e.to_string()),
+    };
 
-        for (user, cmd) in &mut commands {
-            println!("\n=> Registering '{}'", user);
-            if args.dry_run {
-                println!("{:?}", cmd);
-            } else {
-                match cmd.status() {
-                    Ok(_) => (),
-                    Err(e) => die("Unable execute command", &e.to_string()),
-                };
-            }
-        }
+    let config: HashMap<String, Vec<CacheRule>> = config.into_iter()
+        .map(|(name, v)| {
+            let rules = v.into_iter()
+                .map(|(pattern, extended)| {
+                    let permissions = extended.into_iter().flat_map(|x| Vec::from(x)).collect();
+                    CacheRule { pattern, permissions }
+                })
+                .collect();
+            (name, rules)
+        }).collect();
+
+    let (user, mut cmd) = generate_command(&config, &args);
+
+    println!("\n=> Fetching token for '{}'", user);
+    if args.dry_run {
+        println!("{:?}", cmd);
+    } else {
+        match cmd.status() {
+            Ok(_) => (),
+            Err(e) => die("Unable execute command", &e.to_string()),
+        };
     }
 }

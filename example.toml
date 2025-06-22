@@ -1,0 +1,6 @@
+[alice]
+"alice-*" = [ "push", "pull", "delete", "create", "configure", "configure-cache-retention", "destroy-cache" ]
+
+[bob]
+"alice-shared" = [ "pull" ]
+"bob-*" = [ "push", "pull", "delete", "create", "configure", "configure-cache-retention", "destroy-cache" ]
